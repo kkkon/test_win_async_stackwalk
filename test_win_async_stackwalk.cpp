@@ -150,9 +150,34 @@ kkRemoteAsyncStackwalk::termDebugHelp(void)
 }
 
 
+static volatile
+bool        s_bNeedTerminate = false;
+
+static
+BOOL WINAPI
+ConsoleCtrlHandler( DWORD dwCtrlType )
+{
+    switch( dwCtrlType )
+    {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        s_bNeedTerminate = true;
+        break;
+    }
+
+    return TRUE;
+}
+
 
 int _tmain(int argc, _TCHAR* argv[])
 {
+    {
+        ::SetConsoleCtrlHandler( ConsoleCtrlHandler, TRUE );
+    }
+
     DWORD   dwProcessId = 0;
 
     for ( int index = 1; index < argc; ++index )
@@ -168,8 +193,6 @@ int _tmain(int argc, _TCHAR* argv[])
             dwProcessId = static_cast<DWORD>(lResult);
         }
     }
-
-    kkRemoteAsyncStackwalk      remote;
 
     if ( 0 == dwProcessId )
     {
@@ -209,6 +232,9 @@ int _tmain(int argc, _TCHAR* argv[])
     {
         return false;
     }
+
+
+    kkRemoteAsyncStackwalk      remote;
 
     {
         remote.attachProcess( dwProcessId );
@@ -290,8 +316,10 @@ int _tmain(int argc, _TCHAR* argv[])
     }
 #endif // defined(_M_X64)
 
+    while( false == s_bNeedTerminate )
+    {
 
-
+    }
 
 	return 0;
 }
