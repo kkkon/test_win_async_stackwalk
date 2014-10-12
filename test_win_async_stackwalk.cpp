@@ -1,0 +1,213 @@
+// test_async_stackwalk.cpp : コンソール アプリケーションのエントリ ポイントを定義します。
+//
+
+#include "stdafx.h"
+
+#include <dbghelp.h>
+#pragma comment(lib,"dbghelp.lib")
+#include <tlhelp32.h>
+
+class kkRemoteAsyncStackwalk
+{
+public:
+    bool    attachProcess( const DWORD dwProcessId );
+    bool    detachProcess( void );
+
+public:
+    kkRemoteAsyncStackwalk();
+    virtual ~kkRemoteAsyncStackwalk();
+
+protected:
+    DWORD           m_dwProcessId;
+    HANDLE          m_hProcess;
+    BOOL            m_bIsWow64;
+};
+
+kkRemoteAsyncStackwalk::kkRemoteAsyncStackwalk()
+    : m_dwProcessId(0), m_hProcess(NULL)
+{
+}
+
+kkRemoteAsyncStackwalk::~kkRemoteAsyncStackwalk()
+{
+    const bool bRet = detachProcess();
+    if ( false == bRet )
+    {
+        ::OutputDebugStringW( L"detachProcess fail\n" );
+    }
+}
+
+bool
+kkRemoteAsyncStackwalk::attachProcess( const DWORD dwProcessId )
+{
+    detachProcess();
+
+    if ( NULL != m_hProcess )
+    {
+        return false;
+    }
+
+    {
+        const DWORD dwDesiredAccess = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
+        const BOOL bInheritHandle = FALSE;
+        m_hProcess = ::OpenProcess( dwDesiredAccess, bInheritHandle, dwProcessId );
+        if ( NULL == m_hProcess )
+        {
+            return false;
+        }
+    }
+
+    {
+        const BOOL BRet = ::IsWow64Process( m_hProcess, &m_bIsWow64 );
+        if ( FALSE == BRet )
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool
+kkRemoteAsyncStackwalk::detachProcess( void )
+{
+    bool result = true;
+
+    if ( NULL != m_hProcess )
+    {
+        const BOOL BRet = ::CloseHandle( m_hProcess );
+        if ( BRet )
+        {
+            m_bIsWow64 = FALSE;
+            m_hProcess = NULL;
+            m_dwProcessId = 0;
+        }
+        else
+        {
+            result = false;
+        }
+    }
+    else
+    {
+        m_bIsWow64 = FALSE;
+        m_dwProcessId = 0;
+    }
+
+    return result;
+}
+
+
+
+
+
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    DWORD   dwProcessId = 0;
+
+    for ( int index = 1; index < argc; ++index )
+    {
+        if ( NULL == argv[index] )
+        {
+            continue;
+        }
+
+        if ( 0 == _tcsncmp( argv[index], _T("--pid="), _tcslen(_T("--pid="))))
+        {
+            const long lResult = _tcstol( &argv[index][_tcslen(_T("--pid="))], NULL, 10 ); 
+            dwProcessId = static_cast<DWORD>(lResult);
+        }
+    }
+
+    kkRemoteAsyncStackwalk      remote;
+
+    if ( 0 == dwProcessId )
+    {
+    }
+    else
+    {
+        remote.attachProcess( dwProcessId );
+    }
+
+    {
+        const DWORD dwFlags = TH32CS_SNAPMODULE;
+        HANDLE hSnapshot = ::CreateToolhelp32Snapshot( dwFlags, dwProcessId );
+
+        if ( INVALID_HANDLE_VALUE == hSnapshot )
+        {
+            const DWORD dwErr = ::GetLastError();
+            if ( ERROR_PARTIAL_COPY == dwErr )
+            {
+                ::OutputDebugStringW( L"Target process is 64bit\n" );
+            }
+            return 1;
+        }
+        else
+        {
+            MODULEENTRY32W  moduleEntry;
+            moduleEntry.dwSize = sizeof(MODULEENTRY32W);
+
+            const BOOL BRet = ::Module32FirstW( hSnapshot, &moduleEntry );
+            if ( BRet )
+            {
+                do
+                {
+                    {
+                        wchar_t     temp[256];
+                        ::wsprintfW( temp, L"%p %p %s\n", moduleEntry.modBaseAddr, moduleEntry.modBaseSize, moduleEntry.szExePath );
+                        ::OutputDebugStringW( temp );
+                    }
+                } while ( ::Module32NextW( hSnapshot, &moduleEntry ) );
+            }
+        }
+
+        if ( INVALID_HANDLE_VALUE != hSnapshot )
+        {
+            const BOOL BRet = ::CloseHandle( hSnapshot );
+            if ( BRet )
+            {
+                hSnapshot = NULL;
+            }
+        }
+    }
+#if defined(_M_X64)
+    {
+        const DWORD dwFlags = TH32CS_SNAPMODULE32;
+        HANDLE hSnapshot = ::CreateToolhelp32Snapshot( dwFlags, dwProcessId );
+
+        if ( INVALID_HANDLE_VALUE != hSnapshot )
+        {
+            MODULEENTRY32W  moduleEntry;
+            moduleEntry.dwSize = sizeof(MODULEENTRY32W);
+
+            const BOOL BRet = ::Module32FirstW( hSnapshot, &moduleEntry );
+            if ( BRet )
+            {
+                do
+                {
+                    {
+                        wchar_t     temp[256];
+                        ::wsprintfW( temp, L"%p %p %s\n", moduleEntry.modBaseAddr, moduleEntry.modBaseSize, moduleEntry.szExePath );
+                        ::OutputDebugStringW( temp );
+                    }
+                } while ( ::Module32NextW( hSnapshot, &moduleEntry ) );
+            }
+        }
+
+        if ( INVALID_HANDLE_VALUE != hSnapshot )
+        {
+            const BOOL BRet = ::CloseHandle( hSnapshot );
+            if ( BRet )
+            {
+                hSnapshot = NULL;
+            }
+        }
+    }
+#endif // defined(_M_X64)
+
+
+
+
+	return 0;
+}
+
