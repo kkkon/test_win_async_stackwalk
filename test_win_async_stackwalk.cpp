@@ -12,6 +12,7 @@ class kkRemoteAsyncStackwalk
 public:
     bool    attachProcess( const DWORD dwProcessId );
     bool    detachProcess( void );
+    bool    isWow64Process( void ) const { return (m_bIsWow64)?(true):(false); }
 
     bool    initDebugHelp();
     bool    termDebugHelp();
@@ -238,6 +239,43 @@ int _tmain(int argc, _TCHAR* argv[])
 
     {
         remote.attachProcess( dwProcessId );
+    }
+
+    if ( remote.isWow64Process() )
+    {
+        for ( ; ; )
+        {
+            const DWORD dwFlags = TH32CS_SNAPMODULE;
+            HANDLE hSnapshot = ::CreateToolhelp32Snapshot( dwFlags, dwProcessId );
+
+            if ( INVALID_HANDLE_VALUE == hSnapshot )
+            {
+                const DWORD dwErr = ::GetLastError();
+                if ( ERROR_PARTIAL_COPY == dwErr )
+                {
+                    ::OutputDebugStringW( L"." );
+                    continue;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            else
+            {
+                const BOOL BRet = ::CloseHandle( hSnapshot );
+                if ( FALSE == BRet )
+                {
+
+                }
+                else
+                {
+                    hSnapshot = INVALID_HANDLE_VALUE;
+                }
+                break;
+            }
+        }
+        ::OutputDebugStringW( L"\n" );
     }
 
     {
