@@ -16,10 +16,15 @@ public:
 
     bool    initDebugHelp();
     bool    termDebugHelp();
+
+    bool    getStackTrace( HANDLE hThread, DWORD64* pStackArray, const size_t arraySize );
+
 public:
     kkRemoteAsyncStackwalk();
     virtual ~kkRemoteAsyncStackwalk();
 
+private:
+    static  BOOL    CALLBACK    ReadProcessMemory64( HANDLE hProcess, DWORD64 pBaseAddress, PVOID pBuffer, DWORD nSize, LPDWORD pNumberOfBytesRead );
 protected:
     DWORD           m_dwProcessId;
     HANDLE          m_hProcess;
@@ -150,6 +155,116 @@ kkRemoteAsyncStackwalk::termDebugHelp(void)
     return true;
 }
 
+BOOL
+CALLBACK
+kkRemoteAsyncStackwalk::ReadProcessMemory64(
+    HANDLE hProcess
+    , DWORD64 pBaseAddress
+    , PVOID pBuffer
+    , DWORD nSize
+    , LPDWORD pNumberOfBytesRead
+)
+{
+    LPCVOID pBase = reinterpret_cast<LPCVOID>(pBaseAddress);
+    const BOOL BRet = ::ReadProcessMemory( hProcess, pBase, pBuffer, nSize, pNumberOfBytesRead );
+    return BRet;
+}
+
+bool
+kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, const size_t arraySize)
+{
+    if ( NULL == m_hProcess )
+    {
+        return false;
+    }
+
+    LPVOID      pContextRecord = NULL;
+    CONTEXT     context;
+    ZeroMemory( &context, sizeof(context) );
+    context.ContextFlags = CONTEXT_ALL;
+    {
+        const BOOL BRet = ::GetThreadContext( hThread, &context );
+        if ( FALSE == BRet )
+        {
+        }
+        else
+        {
+            pContextRecord = &context;
+        }
+    }
+
+
+
+    STACKFRAME64    stackFrame;
+    ZeroMemory( &stackFrame, sizeof(stackFrame) );
+
+    DWORD   dwMachineType = 0;
+#if defined(_M_X64)
+    dwMachineType = IMAGE_FILE_MACHINE_AMD64;
+    stackFrame.AddrPC.Offset = context.Rip;
+    stackFrame.AddrFrame.Offset = context.Rbp;
+    stackFrame.AddrStack.Offset = context.Rsp;
+#endif // defined(_M_X64)
+#if defined(_M_IX86)
+    dwMachineType = IMAGE_FILE_MACHINE_I386;
+    stackFrame.AddrPC.Offset = context.Eip;
+    stackFrame.AddrFrame.Offset = context.Ebp;
+    stackFrame.AddrStack.Offset = context.Esp;
+#endif // defined(_M_X86)
+#if defined(_M_IA64)
+    dwMachineType = IMAGE_FILE_MACHINE_I386;
+    stackFrame.AddrPC.Offset = context.StIIP;
+    stackFrame.AddrFrame.Offset = context.RsBSP;
+    stackFrame.AddrStack.Offset = context.IntSP;
+    stackFrame.AddrBStore.Offset = context.RsBSP;
+#endif // defined(_M_IA64)
+
+    stackFrame.AddrPC.Mode = AddrModeFlat;
+    stackFrame.AddrFrame.Mode = AddrModeFlat;
+    stackFrame.AddrStack.Mode = AddrModeFlat;
+    stackFrame.AddrBStore.Mode = AddrModeFlat;
+
+    bool result = true;
+    ::EnterCriticalSection( &m_cs );
+    {
+        __try
+        {
+            size_t count = 0;
+            for ( count = 0; count < arraySize; ++count )
+            {
+                const BOOL BRet = ::StackWalk64(
+                    dwMachineType
+                    , m_hProcess
+                    , hThread
+                    , &stackFrame
+                    , pContextRecord
+                    , ReadProcessMemory64
+                    , NULL
+                    , NULL
+                    , NULL
+                    );
+                if ( FALSE == BRet )
+                {
+                    break;
+                }
+
+                pStackArray[count] = stackFrame.AddrPC.Offset;
+
+            }
+
+            if ( 0 == count )
+            {
+                result = false;
+            }
+        }
+        __except( EXCEPTION_CONTINUE_EXECUTION )
+        {
+        }
+    }
+    ::LeaveCriticalSection( &m_cs );
+
+    return result;
+}
 
 static volatile
 bool        s_bNeedTerminate = false;
@@ -218,7 +333,7 @@ int _tmain(int argc, _TCHAR* argv[])
         const BOOL BRet = ::CreateProcessW( argv[1], cmdLine, NULL, NULL, FALSE, 0, NULL, NULL, &startupInfo, &processInfo );
         if ( FALSE == BRet )
         {
-            const DWORD dwRet = ::GetLastError();
+            const DWORD dwErr = ::GetLastError();
             ::OutputDebugStringW( L"CreateProcess failed.\n" );
         }
         else
@@ -354,9 +469,62 @@ int _tmain(int argc, _TCHAR* argv[])
     }
 #endif // defined(_M_X64)
 
+    DWORD64     stackArray[128];
     while( false == s_bNeedTerminate )
     {
+        const DWORD dwFlags = TH32CS_SNAPTHREAD;
+        HANDLE hSnapshot = ::CreateToolhelp32Snapshot( dwFlags, 0 );
+        if ( INVALID_HANDLE_VALUE != hSnapshot )
+        {
+            THREADENTRY32   threadEntry;
+            threadEntry.dwSize = sizeof(threadEntry);
 
+            const BOOL BRetFirst = ::Thread32First( hSnapshot, &threadEntry );
+            if ( BRetFirst )
+            {
+                printf( "\n" );
+                do
+                {
+                    if ( dwProcessId != threadEntry.th32OwnerProcessID )
+                    {
+                        continue;
+                    }
+                    printf( "tid=%u\n", threadEntry.th32ThreadID );
+
+                    const DWORD dwDesiredAccess = THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT;
+                    HANDLE hThread = ::OpenThread( dwDesiredAccess, FALSE, threadEntry.th32ThreadID );
+                    if ( NULL == hThread )
+                    {
+                        const DWORD dwErr = ::GetLastError();
+                        ::OutputDebugStringW( L"OpenThread fail.\n" );
+                    }
+                    else
+                    {
+                        remote.getStackTrace( hThread, stackArray, sizeof(stackArray)/sizeof(stackArray[0]) );
+                    }
+
+                    if ( NULL != hThread )
+                    {
+                        const BOOL BRet = ::CloseHandle( hThread );
+                        if ( BRet )
+                        {
+                            hThread = NULL;
+                        }
+                    }
+                } while( ::Thread32Next( hSnapshot, &threadEntry ) );
+            }
+        }
+
+        if ( INVALID_HANDLE_VALUE != hSnapshot )
+        {
+            const BOOL BRet = ::CloseHandle( hSnapshot );
+            if ( BRet )
+            {
+                hSnapshot = INVALID_HANDLE_VALUE;
+            }
+        }
+
+        ::Sleep( 1*1000 );
     }
 
 	return 0;
