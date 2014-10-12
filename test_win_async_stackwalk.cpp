@@ -23,11 +23,14 @@ protected:
     DWORD           m_dwProcessId;
     HANDLE          m_hProcess;
     BOOL            m_bIsWow64;
+
+    CRITICAL_SECTION    m_cs;
 };
 
 kkRemoteAsyncStackwalk::kkRemoteAsyncStackwalk()
     : m_dwProcessId(0), m_hProcess(NULL)
 {
+    ::InitializeCriticalSection( &m_cs );
 }
 
 kkRemoteAsyncStackwalk::~kkRemoteAsyncStackwalk()
@@ -37,6 +40,7 @@ kkRemoteAsyncStackwalk::~kkRemoteAsyncStackwalk()
     {
         ::OutputDebugStringW( L"detachProcess fail\n" );
     }
+    ::DeleteCriticalSection( &m_cs );
 }
 
 bool
@@ -109,13 +113,18 @@ kkRemoteAsyncStackwalk::initDebugHelp(void)
         return false;
     }
 
-    const BOOL BRet = ::SymInitializeW( m_hProcess, NULL, TRUE );
-    if ( FALSE == BRet )
+    bool result = true;
+    ::EnterCriticalSection( &m_cs );
     {
-        return false;
+        const BOOL BRet = ::SymInitializeW( m_hProcess, NULL, TRUE );
+        if ( FALSE == BRet )
+        {
+            result = false;
+        }
     }
+    ::LeaveCriticalSection( &m_cs );
 
-    return true;
+    return result;
 }
 
 bool
@@ -126,11 +135,16 @@ kkRemoteAsyncStackwalk::termDebugHelp(void)
         return false;
     }
 
-    const BOOL BRet = ::SymCleanup( m_hProcess );
-    if ( FALSE == BRet )
+    bool result = true;
+    ::EnterCriticalSection( &m_cs );
     {
-        return false;
+        const BOOL BRet = ::SymCleanup( m_hProcess );
+        if ( FALSE == BRet )
+        {
+            result = false;
+        }
     }
+    ::LeaveCriticalSection( &m_cs );
 
     return true;
 }
