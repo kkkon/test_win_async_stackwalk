@@ -11,6 +11,7 @@
 
 #if MESURE_TIME
 static DWORD    s_dwTimeReadMemory = 0;
+static DWORD    s_dwTimeGetThreadContext = 0;
 static DWORD    s_dwTimeStackWalk = 0;
 static DWORD    s_dwTimeGetStack = 0;
 #endif // MESURE_TIME
@@ -202,7 +203,17 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     ZeroMemory( &context, sizeof(context) );
     context.ContextFlags = CONTEXT_ALL;
     {
+#if MESURE_TIME
+        const DWORD timeStart = ::GetTickCount();
+#endif // MESURE_TIME
+
         const BOOL BRet = ::GetThreadContext( hThread, &context );
+
+#if MESURE_TIME
+        const DWORD timeEnd = ::GetTickCount();
+        s_dwTimeGetThreadContext += (timeEnd - timeStart);
+#endif // MESURE_TIME
+
         if ( FALSE == BRet )
         {
         }
@@ -562,13 +573,15 @@ int _tmain(int argc, _TCHAR* argv[])
         }
 
 #if MESURE_TIME
-        printf( "%u %u %u\n"
+        printf( "%u %u %u %u\n"
             , s_dwTimeGetStack
+            , s_dwTimeGetThreadContext
             , s_dwTimeStackWalk
             , s_dwTimeReadMemory
             );
 
         s_dwTimeGetStack = 0;
+        s_dwTimeGetThreadContext = 0;
         s_dwTimeStackWalk = 0;
         s_dwTimeReadMemory = 0;
 #endif // MESURE_TIME
