@@ -7,6 +7,15 @@
 #pragma comment(lib,"dbghelp.lib")
 #include <tlhelp32.h>
 
+#define MESURE_TIME 1
+
+#if MESURE_TIME
+static DWORD    s_dwTimeReadMemory = 0;
+static DWORD    s_dwTimeStackWalk = 0;
+static DWORD    s_dwTimeGetStack = 0;
+#endif // MESURE_TIME
+
+
 class kkRemoteAsyncStackwalk
 {
 public:
@@ -165,8 +174,18 @@ kkRemoteAsyncStackwalk::ReadProcessMemory64(
     , LPDWORD pNumberOfBytesRead
 )
 {
+#if MESURE_TIME
+    const DWORD timeStart = ::GetTickCount();
+#endif // MESURE_TIME
+
     LPCVOID pBase = reinterpret_cast<LPCVOID>(pBaseAddress);
     const BOOL BRet = ::ReadProcessMemory( hProcess, pBase, pBuffer, nSize, pNumberOfBytesRead );
+
+#if MESURE_TIME
+    const DWORD timeEnd = ::GetTickCount();
+    s_dwTimeReadMemory += (timeEnd - timeStart);
+#endif // MESURE_TIME
+
     return BRet;
 }
 
@@ -232,6 +251,10 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
             size_t count = 0;
             for ( count = 0; count < arraySize; ++count )
             {
+#if MESURE_TIME
+                const DWORD timeStart = ::GetTickCount();
+#endif // MESURE_TIME
+
                 const BOOL BRet = ::StackWalk64(
                     dwMachineType
                     , m_hProcess
@@ -243,6 +266,10 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
                     , NULL
                     , NULL
                     );
+#if MESURE_TIME
+                const DWORD timeEnd = ::GetTickCount();
+                s_dwTimeStackWalk += (timeEnd - timeStart);
+#endif // MESURE_TIME
                 if ( FALSE == BRet )
                 {
                     break;
@@ -366,7 +393,10 @@ int _tmain(int argc, _TCHAR* argv[])
             if ( INVALID_HANDLE_VALUE == hSnapshot )
             {
                 const DWORD dwErr = ::GetLastError();
-                if ( ERROR_PARTIAL_COPY == dwErr )
+                if (
+                    ERROR_PARTIAL_COPY == dwErr
+                    || ERROR_BAD_LENGTH == dwErr
+                )
                 {
                     ::OutputDebugStringW( L"." );
                     continue;
@@ -482,14 +512,14 @@ int _tmain(int argc, _TCHAR* argv[])
             const BOOL BRetFirst = ::Thread32First( hSnapshot, &threadEntry );
             if ( BRetFirst )
             {
-                printf( "\n" );
+                //printf( "\n" );
                 do
                 {
                     if ( dwProcessId != threadEntry.th32OwnerProcessID )
                     {
                         continue;
                     }
-                    printf( "tid=%u\n", threadEntry.th32ThreadID );
+                    //printf( "tid=%u\n", threadEntry.th32ThreadID );
 
                     const DWORD dwDesiredAccess = THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT;
                     HANDLE hThread = ::OpenThread( dwDesiredAccess, FALSE, threadEntry.th32ThreadID );
@@ -500,7 +530,14 @@ int _tmain(int argc, _TCHAR* argv[])
                     }
                     else
                     {
+#if MESURE_TIME
+                        const DWORD timeStart = ::GetTickCount();
+#endif // MESURE_TIME
                         remote.getStackTrace( hThread, stackArray, sizeof(stackArray)/sizeof(stackArray[0]) );
+#if MESURE_TIME
+                        const DWORD timeEnd = ::GetTickCount();
+                        s_dwTimeGetStack += (timeEnd - timeStart);
+#endif // MESURE_TIME
                     }
 
                     if ( NULL != hThread )
@@ -523,6 +560,18 @@ int _tmain(int argc, _TCHAR* argv[])
                 hSnapshot = INVALID_HANDLE_VALUE;
             }
         }
+
+#if MESURE_TIME
+        printf( "%u %u %u\n"
+            , s_dwTimeGetStack
+            , s_dwTimeStackWalk
+            , s_dwTimeReadMemory
+            );
+
+        s_dwTimeGetStack = 0;
+        s_dwTimeStackWalk = 0;
+        s_dwTimeReadMemory = 0;
+#endif // MESURE_TIME
 
         ::Sleep( 1*1000 );
     }
