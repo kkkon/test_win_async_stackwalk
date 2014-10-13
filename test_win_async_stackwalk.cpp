@@ -201,7 +201,8 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     LPVOID      pContextRecord = NULL;
     CONTEXT     context;
     ZeroMemory( &context, sizeof(context) );
-    context.ContextFlags = CONTEXT_ALL;
+    //context.ContextFlags = CONTEXT_ALL;
+    context.ContextFlags = CONTEXT_INTEGER;
     {
 #if MESURE_TIME
         const DWORD timeStart = ::GetTickCount();
@@ -216,6 +217,7 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
 
         if ( FALSE == BRet )
         {
+            ::OutputDebugStringW( L"GetThreadContext fail\n" );
         }
         else
         {
@@ -292,6 +294,7 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
 
             if ( 0 == count )
             {
+                ::OutputDebugStringW( L"StackWalk64 fail\n" );
                 result = false;
             }
         }
