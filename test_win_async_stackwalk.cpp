@@ -7,6 +7,7 @@
 #pragma comment(lib,"dbghelp.lib")
 #include <tlhelp32.h>
 
+#define USE_GETTHREADCONTEXT 0
 #define MESURE_TIME 1
 
 #if MESURE_TIME
@@ -199,6 +200,7 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     }
 
     LPVOID      pContextRecord = NULL;
+#if USE_GETTHREADCONTEXT
     CONTEXT     context;
     ZeroMemory( &context, sizeof(context) );
     //context.ContextFlags = CONTEXT_ALL;
@@ -224,6 +226,7 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
             pContextRecord = &context;
         }
     }
+#endif // USE_GETTHREADCONTEXT
 
 
 
@@ -231,6 +234,7 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     ZeroMemory( &stackFrame, sizeof(stackFrame) );
 
     DWORD   dwMachineType = 0;
+#if USE_GETTHREADCONTEXT
 #if defined(_M_X64)
     dwMachineType = IMAGE_FILE_MACHINE_AMD64;
     stackFrame.AddrPC.Offset = context.Rip;
@@ -250,6 +254,27 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     stackFrame.AddrStack.Offset = context.IntSP;
     stackFrame.AddrBStore.Offset = context.RsBSP;
 #endif // defined(_M_IA64)
+#else // USE_GETTHREADCONTEXT
+#if defined(_M_X64)
+    dwMachineType = IMAGE_FILE_MACHINE_AMD64;
+    stackFrame.AddrPC.Offset = 0;
+    stackFrame.AddrFrame.Offset = 0;
+    stackFrame.AddrStack.Offset = 0;
+#endif // defined(_M_X64)
+#if defined(_M_IX86)
+    dwMachineType = IMAGE_FILE_MACHINE_I386;
+    stackFrame.AddrPC.Offset = 0;
+    stackFrame.AddrFrame.Offset = 0;
+    stackFrame.AddrStack.Offset = 0;
+#endif // defined(_M_X86)
+#if defined(_M_IA64)
+    dwMachineType = IMAGE_FILE_MACHINE_I386;
+    stackFrame.AddrPC.Offset = 0;
+    stackFrame.AddrFrame.Offset = 0;
+    stackFrame.AddrStack.Offset = 0;
+    stackFrame.AddrBStore.Offset = 0;
+#endif // defined(_M_IA64)
+#endif // USE_GETTHREADCONTEXT
 
     stackFrame.AddrPC.Mode = AddrModeFlat;
     stackFrame.AddrFrame.Mode = AddrModeFlat;
