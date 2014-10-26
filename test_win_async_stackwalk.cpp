@@ -286,7 +286,7 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     stackFrame.AddrStack.Offset = context.Esp;
 #endif // defined(_M_X86)
 #if defined(_M_IA64)
-    dwMachineType = IMAGE_FILE_MACHINE_I386;
+    dwMachineType = IMAGE_FILE_MACHINE_IA64;
     stackFrame.AddrPC.Offset = context.StIIP;
     stackFrame.AddrFrame.Offset = context.RsBSP;
     stackFrame.AddrStack.Offset = context.IntSP;
@@ -306,7 +306,7 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     stackFrame.AddrStack.Offset = 0;
 #endif // defined(_M_X86)
 #if defined(_M_IA64)
-    dwMachineType = IMAGE_FILE_MACHINE_I386;
+    dwMachineType = IMAGE_FILE_MACHINE_IA64;
     stackFrame.AddrPC.Offset = 0;
     stackFrame.AddrFrame.Offset = 0;
     stackFrame.AddrStack.Offset = 0;
