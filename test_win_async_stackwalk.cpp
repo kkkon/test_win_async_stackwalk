@@ -45,7 +45,7 @@ and then async StackWalk64
 */
 
 
-#define USE_GETTHREADCONTEXT 0
+#define USE_GETTHREADCONTEXT 1
 #define MESURE_TIME 1
 
 #if MESURE_TIME
@@ -80,6 +80,14 @@ protected:
     BOOL            m_bIsWow64;
 
     CRITICAL_SECTION    m_cs;
+
+    union MIX_CONTEXT
+    {
+        CONTEXT     context;
+#if defined(_M_X64)
+        WOW64_CONTEXT   contextWow64;
+#endif // defined(_M_IA64)
+    };
 };
 
 kkRemoteAsyncStackwalk::kkRemoteAsyncStackwalk()
@@ -219,12 +227,19 @@ kkRemoteAsyncStackwalk::ReadProcessMemory64(
 #endif // MESURE_TIME
 
     LPCVOID pBase = reinterpret_cast<LPCVOID>(pBaseAddress);
-    const BOOL BRet = ::ReadProcessMemory( hProcess, pBase, pBuffer, nSize, pNumberOfBytesRead );
+    SIZE_T  size = nSize;
+    SIZE_T  readedSize = 0;
+    const BOOL BRet = ::ReadProcessMemory( hProcess, pBase, pBuffer, size, &readedSize );
 
 #if MESURE_TIME
     const DWORD timeEnd = ::GetTickCount();
     s_dwTimeReadMemory += (timeEnd - timeStart);
 #endif // MESURE_TIME
+
+    if ( NULL != pNumberOfBytesRead )
+    {
+        *pNumberOfBytesRead = (DWORD)readedSize;
+    }
 
     return BRet;
 }
@@ -239,16 +254,43 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
 
     LPVOID      pContextRecord = NULL;
 #if USE_GETTHREADCONTEXT
-    CONTEXT     context;
+    MIX_CONTEXT context;
     ZeroMemory( &context, sizeof(context) );
-    //context.ContextFlags = CONTEXT_ALL;
-    context.ContextFlags = CONTEXT_INTEGER;
+
+#if defined(_M_X64)
+    if ( this->isWow64Process() )
+    {
+        //context.contextWow64.ContextFlags = WOW64_CONTEXT_ALL;
+        context.contextWow64.ContextFlags = WOW64_CONTEXT_INTEGER | WOW64_CONTEXT_SEGMENTS;
+    }
+    else
+    {
+        //context.context.ContextFlags = CONTEXT_ALL;
+        context.context.ContextFlags = CONTEXT_INTEGER | CONTEXT_SEGMENTS;
+    }
+#endif // defined(_M_X64)
+#if defined(_M_IX86)
+        //context.context.ContextFlags = CONTEXT_ALL;
+        context.context.ContextFlags = CONTEXT_INTEGER | CONTEXT_SEGMENTS;
+#endif
+#if defined(_M_IA64)
+        //context.context.ContextFlags = CONTEXT_ALL;
+        context.context.ContextFlags = CONTEXT_INTEGER;
+#endif
+
     {
 #if MESURE_TIME
         const DWORD timeStart = ::GetTickCount();
 #endif // MESURE_TIME
 
-        const BOOL BRet = ::GetThreadContext( hThread, &context );
+#if defined(_M_X64)
+        const BOOL BRet =
+            (this->isWow64Process())
+            ?(::Wow64GetThreadContext( hThread, &context.contextWow64 ))
+            :(::GetThreadContext( hThread, &context.context ));
+#else
+        const BOOL BRet = ::GetThreadContext( hThread, &context.context );
+#endif
 
 #if MESURE_TIME
         const DWORD timeEnd = ::GetTickCount();
@@ -274,16 +316,26 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     DWORD   dwMachineType = 0;
 #if USE_GETTHREADCONTEXT
 #if defined(_M_X64)
-    dwMachineType = IMAGE_FILE_MACHINE_AMD64;
-    stackFrame.AddrPC.Offset = context.Rip;
-    stackFrame.AddrFrame.Offset = context.Rbp;
-    stackFrame.AddrStack.Offset = context.Rsp;
+    if ( this->isWow64Process() )
+    {
+        dwMachineType = IMAGE_FILE_MACHINE_I386;
+        stackFrame.AddrPC.Offset = context.contextWow64.Eip;
+        stackFrame.AddrFrame.Offset = context.contextWow64.Ebp;
+        stackFrame.AddrStack.Offset = context.contextWow64.Esp;
+    }
+    else
+    {
+        dwMachineType = IMAGE_FILE_MACHINE_AMD64;
+        stackFrame.AddrPC.Offset = context.context.Rip;
+        stackFrame.AddrFrame.Offset = context.context.Rbp;
+        stackFrame.AddrStack.Offset = context.context.Rsp;
+    }
 #endif // defined(_M_X64)
 #if defined(_M_IX86)
     dwMachineType = IMAGE_FILE_MACHINE_I386;
-    stackFrame.AddrPC.Offset = context.Eip;
-    stackFrame.AddrFrame.Offset = context.Ebp;
-    stackFrame.AddrStack.Offset = context.Esp;
+    stackFrame.AddrPC.Offset = context.context.Eip;
+    stackFrame.AddrFrame.Offset = context.context.Ebp;
+    stackFrame.AddrStack.Offset = context.context.Esp;
 #endif // defined(_M_X86)
 #if defined(_M_IA64)
     dwMachineType = IMAGE_FILE_MACHINE_IA64;
