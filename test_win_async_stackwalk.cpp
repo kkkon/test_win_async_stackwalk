@@ -521,7 +521,6 @@ kkRemoteAsyncStackwalk::captureStack( HANDLE hThread, LPVOID pContextRecord )
 #else // defined(_M_IA64)
 
 #if defined(_M_X64)
-#if 1
     bool result = true;
     typedef ULONG   KPRIORITY;
     struct CLIENT_ID
@@ -612,33 +611,6 @@ kkRemoteAsyncStackwalk::captureStack( HANDLE hThread, LPVOID pContextRecord )
             }
         }
     }
-#else
-    // need _WIN32_WINNT 0x0700
-    WOW64_LDT_ENTRY   ldtEntry;
-    ZeroMemory( &ldtEntry, sizeof(ldtEntry) );
-
-    const CONTEXT* pContext = (const CONTEXT*)pContextRecord;
-    const DWORD dwSelector = 0;//pContext->SegGs;
-
-    bool result = true;
-    const BOOL BRet = ::Wow64GetThreadSelectorEntry( hThread, dwSelector, &ldtEntry );
-    if ( FALSE == BRet )
-    {
-        const DWORD dwErr = ::GetLastError();
-        result = false;
-    }
-    else
-    {
-        DWORD64 dwTEBremote = 
-            ldtEntry.BaseLow
-            | (ldtEntry.HighWord.Bytes.BaseMid << 16)
-            | (ldtEntry.HighWord.Bytes.BaseHi  << 24)
-            ;
-        wchar_t temp[256];
-        ::wsprintfW( temp, L"pTEB=%p from Selector\n", dwTEBremote + FIELD_OFFSET(NT_TIB, Self) );
-        ::OutputDebugStringW( temp );
-    }
-#endif
 #endif // defined(_M_X64)
 
 #if defined(_M_IX86)
