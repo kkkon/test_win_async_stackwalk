@@ -28,6 +28,13 @@
 #pragma comment(lib,"dbghelp.lib")
 #include <tlhelp32.h>
 
+// NtQueryInformationThread
+#include <winternl.h>
+
+#if defined(_MSC_VER)
+#include <crtdbg.h>
+#endif // defined(_MSC_VER)
+
 /*
 TODO
 
@@ -55,6 +62,7 @@ static DWORD    s_dwTimeStackWalk = 0;
 static DWORD    s_dwTimeGetStack = 0;
 #endif // MESURE_TIME
 
+#include <string>
 
 class kkRemoteAsyncStackwalk
 {
@@ -66,6 +74,7 @@ public:
     bool    initDebugHelp();
     bool    termDebugHelp();
 
+    bool    captureStack( HANDLE hThread, LPVOID pContextRecord );
     bool    getStackTrace( HANDLE hThread, DWORD64* pStackArray, const size_t arraySize );
 
 public:
@@ -88,7 +97,28 @@ protected:
         WOW64_CONTEXT   contextWow64;
 #endif // defined(_M_IA64)
     };
+
+    struct ModuleInfo
+    {
+        void*           pBuff;
+        size_t          size;
+        DWORD64         dwAddrStart;
+        DWORD64         dwAddrEnd;
+        std::wstring    strModuleName;
+
+        ModuleInfo()
+        {
+            pBuff = NULL;
+            size = 0;
+            dwAddrStart = 0;
+            dwAddrEnd = 0;
+        }
+    };
+
+    static  ModuleInfo      m_stack;
 };
+
+kkRemoteAsyncStackwalk::ModuleInfo      kkRemoteAsyncStackwalk::m_stack;
 
 kkRemoteAsyncStackwalk::kkRemoteAsyncStackwalk()
     : m_dwProcessId(0), m_hProcess(NULL)
@@ -104,6 +134,15 @@ kkRemoteAsyncStackwalk::~kkRemoteAsyncStackwalk()
         ::OutputDebugStringW( L"detachProcess fail\n" );
     }
     ::DeleteCriticalSection( &m_cs );
+
+    if ( NULL != m_stack.pBuff )
+    {
+        free( m_stack.pBuff );
+        m_stack.pBuff = NULL;
+        m_stack.size = 0;
+        m_stack.dwAddrStart = 0;
+        m_stack.dwAddrEnd = 0;
+    }
 }
 
 bool
@@ -222,6 +261,22 @@ kkRemoteAsyncStackwalk::ReadProcessMemory64(
     , LPDWORD pNumberOfBytesRead
 )
 {
+    const kkRemoteAsyncStackwalk::ModuleInfo&   rStack = kkRemoteAsyncStackwalk::m_stack;
+    if ( NULL != rStack.pBuff )
+    {
+        if ( rStack.dwAddrStart <= pBaseAddress && (pBaseAddress+nSize) < rStack.dwAddrEnd )
+        {
+            memcpy( pBuffer, rStack.pBuff, nSize );
+
+            if ( NULL != pNumberOfBytesRead )
+            {
+                *pNumberOfBytesRead = nSize;
+            }
+
+            return TRUE;
+        }
+    }
+
 #if MESURE_TIME
     const DWORD timeStart = ::GetTickCount();
 #endif // MESURE_TIME
@@ -261,17 +316,17 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     if ( this->isWow64Process() )
     {
         //context.contextWow64.ContextFlags = WOW64_CONTEXT_ALL;
-        context.contextWow64.ContextFlags = WOW64_CONTEXT_INTEGER | WOW64_CONTEXT_SEGMENTS;
+        context.contextWow64.ContextFlags = WOW64_CONTEXT_CONTROL | WOW64_CONTEXT_INTEGER | WOW64_CONTEXT_SEGMENTS;
     }
     else
     {
         //context.context.ContextFlags = CONTEXT_ALL;
-        context.context.ContextFlags = CONTEXT_INTEGER | CONTEXT_SEGMENTS;
+        context.context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS;
     }
 #endif // defined(_M_X64)
 #if defined(_M_IX86)
         //context.context.ContextFlags = CONTEXT_ALL;
-        context.context.ContextFlags = CONTEXT_INTEGER | CONTEXT_SEGMENTS;
+        context.context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS;
 #endif
 #if defined(_M_IA64)
         //context.context.ContextFlags = CONTEXT_ALL;
@@ -308,7 +363,9 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     }
 #endif // USE_GETTHREADCONTEXT
 
-
+    {
+        const bool bRet = this->captureStack( hThread, &context );
+    }
 
     STACKFRAME64    stackFrame;
     ZeroMemory( &stackFrame, sizeof(stackFrame) );
@@ -422,6 +479,209 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
     return result;
 }
 
+bool
+kkRemoteAsyncStackwalk::captureStack( HANDLE hThread, LPVOID pContextRecord )
+{
+#if defined(_M_IA64)
+    const CONTEXT* pContext = (const CONTEXT*)pContextRecord;
+    TEB* pRemoteTEB = pContext->IntTeb;
+#else // defined(_M_IA64)
+
+#if defined(_M_X64)
+#if 1
+    bool result = true;
+    typedef ULONG   KPRIORITY;
+    struct CLIENT_ID
+    {
+        HANDLE      UniqueProcessId;
+        HANDLE      UniqueThreadId;
+    };
+    struct THREAD_BASIC_INFORMATION
+    {
+        NTSTATUS    ExitStatus;
+        PVOID       TebBaseAddress;
+        CLIENT_ID   ClientId;
+        KAFFINITY   AffinityMask;
+        KPRIORITY   Priority;
+        KPRIORITY   BasePriority;
+    };
+    THREAD_BASIC_INFORMATION basicInfo;
+    const size_t ThreadBasicInformation = 0;
+    ULONG   returnLength = 0;
+    HMODULE hModule = ::GetModuleHandleW( L"ntdll.dll" );
+    if ( NULL != hModule )
+    {
+        typedef NTSTATUS (WINAPI * PFN_NtQueryInformationThread)(HANDLE ThreadHandle, THREADINFOCLASS ThreadInformationClass, PVOID ThreadInformation, ULONG ThreadInformationLength, PULONG ReturnLength );
+        PFN_NtQueryInformationThread    pfnNtQueryInformationThread = NULL;
+        pfnNtQueryInformationThread = (PFN_NtQueryInformationThread)::GetProcAddress( hModule, "NtQueryInformationThread" );
+        if ( NULL != pfnNtQueryInformationThread )
+        {
+            const NTSTATUS status = pfnNtQueryInformationThread( hThread, (THREADINFOCLASS)ThreadBasicInformation, &basicInfo, sizeof(basicInfo), &returnLength );
+            //if ( !NT_SUCCESS(status) )
+            if ( status < 0 )
+            {
+                result = false;
+            }
+            else
+            {
+                //wchar_t temp[256];
+                //::wsprintfW( temp, L"pTEB=%p from ThreadBasicInformation\n", basicInfo.TebBaseAddress );
+                //::OutputDebugStringW( temp );
+
+                NT_TIB      tib;
+                ZeroMemory( &tib, sizeof(tib) );
+                DWORD64 dwTEBremote = reinterpret_cast<DWORD64>(basicInfo.TebBaseAddress);
+                const BOOL BRet = kkRemoteAsyncStackwalk::ReadProcessMemory64( this->m_hProcess, dwTEBremote, &tib, sizeof(tib), NULL );
+                if ( FALSE == BRet )
+                {
+                    const DWORD dwErr = ::GetLastError();
+                    ::DebugBreak();
+                }
+                else
+                {
+                    if ( reinterpret_cast<DWORD64>(tib.Self) == dwTEBremote )
+                    {
+                        size_t nSize = (LPBYTE)tib.StackBase - (LPBYTE)tib.StackLimit;
+
+                        if ( NULL != m_stack.pBuff )
+                        {
+                            if ( m_stack.size != nSize )
+                            {
+                                free( m_stack.pBuff );
+                                m_stack.size = 0;
+                                m_stack.pBuff = NULL;
+                            }
+                        }
+
+                        {
+                            m_stack.pBuff = malloc( nSize );
+                            if ( NULL != m_stack.pBuff )
+                            {
+                                m_stack.size = nSize;
+                                m_stack.dwAddrStart = reinterpret_cast<DWORD64>(tib.StackLimit);
+                                m_stack.dwAddrEnd = reinterpret_cast<DWORD64>(tib.StackBase);
+
+                                const BOOL BRetCapture = kkRemoteAsyncStackwalk::ReadProcessMemory64( this->m_hProcess, m_stack.dwAddrStart, m_stack.pBuff, m_stack.size, NULL );
+                                if ( FALSE == BRetCapture )
+                                {
+                                    const DWORD dwErr = ::GetLastError();
+                                    ::DebugBreak();
+                                }
+                                else
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                }
+
+            }
+        }
+    }
+#else
+    // need _WIN32_WINNT 0x0700
+    WOW64_LDT_ENTRY   ldtEntry;
+    ZeroMemory( &ldtEntry, sizeof(ldtEntry) );
+
+    const CONTEXT* pContext = (const CONTEXT*)pContextRecord;
+    const DWORD dwSelector = 0;//pContext->SegGs;
+
+    bool result = true;
+    const BOOL BRet = ::Wow64GetThreadSelectorEntry( hThread, dwSelector, &ldtEntry );
+    if ( FALSE == BRet )
+    {
+        const DWORD dwErr = ::GetLastError();
+        result = false;
+    }
+    else
+    {
+        DWORD64 dwTEBremote = 
+            ldtEntry.BaseLow
+            | (ldtEntry.HighWord.Bytes.BaseMid << 16)
+            | (ldtEntry.HighWord.Bytes.BaseHi  << 24)
+            ;
+        wchar_t temp[256];
+        ::wsprintfW( temp, L"pTEB=%p from Selector\n", dwTEBremote + FIELD_OFFSET(NT_TIB, Self) );
+        ::OutputDebugStringW( temp );
+    }
+#endif
+#endif // defined(_M_X64)
+
+#if defined(_M_IX86)
+    LDT_ENTRY   ldtEntry;
+    ZeroMemory( &ldtEntry, sizeof(ldtEntry) );
+
+    const CONTEXT* pContext = (const CONTEXT*)pContextRecord;
+    const DWORD dwSelector = pContext->SegFs;
+
+    bool result = true;
+    const BOOL BRet = ::GetThreadSelectorEntry( hThread, dwSelector, &ldtEntry );
+    if ( FALSE == BRet )
+    {
+        result = false;
+    }
+    else
+    {
+        DWORD64 dwTEBremote = 
+            ldtEntry.BaseLow
+            | (ldtEntry.HighWord.Bytes.BaseMid << 16)
+            | (ldtEntry.HighWord.Bytes.BaseHi  << 24)
+            ;
+
+        NT_TIB      tib;
+        ZeroMemory( &tib, sizeof(tib) );
+        const BOOL BRet = kkRemoteAsyncStackwalk::ReadProcessMemory64( this->m_hProcess, dwTEBremote, &tib, sizeof(tib), NULL );
+        if ( FALSE == BRet )
+        {
+            const DWORD dwErr = ::GetLastError();
+            ::DebugBreak();
+        }
+        else
+        {
+            if ( reinterpret_cast<DWORD64>(tib.Self) == dwTEBremote )
+            {
+                size_t nSize = (LPBYTE)tib.StackBase - (LPBYTE)tib.StackLimit;
+
+                if ( NULL != m_stack.pBuff )
+                {
+                    if ( m_stack.size != nSize )
+                    {
+                        free( m_stack.pBuff );
+                        m_stack.size = 0;
+                        m_stack.pBuff = NULL;
+                    }
+                }
+
+                {
+                    m_stack.pBuff = malloc( nSize );
+                    if ( NULL != m_stack.pBuff )
+                    {
+                        m_stack.size = nSize;
+                        m_stack.dwAddrStart = reinterpret_cast<DWORD64>(tib.StackLimit);
+                        m_stack.dwAddrEnd = reinterpret_cast<DWORD64>(tib.StackBase);
+
+                        const BOOL BRetCapture = kkRemoteAsyncStackwalk::ReadProcessMemory64( this->m_hProcess, m_stack.dwAddrStart, m_stack.pBuff, m_stack.size, NULL );
+                        if ( FALSE == BRetCapture )
+                        {
+                            const DWORD dwErr = ::GetLastError();
+                            ::DebugBreak();
+                        }
+                        else
+                        {
+
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif // defined(_M_IX86)
+
+    return result;
+#endif // defined(_M_IA64)
+}
+
 static volatile
 bool        s_bNeedTerminate = false;
 
@@ -446,6 +706,12 @@ ConsoleCtrlHandler( DWORD dwCtrlType )
 
 int _tmain(int argc, _TCHAR* argv[])
 {
+#if defined(_DEBUG)
+    {
+        const int value = ::_CrtSetDbgFlag( 0 );
+        ::_CrtSetDbgFlag( value | _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF );
+    }
+#endif // defined(_DEBUG)
     {
         ::SetConsoleCtrlHandler( ConsoleCtrlHandler, TRUE );
     }
@@ -512,7 +778,7 @@ int _tmain(int argc, _TCHAR* argv[])
         remote.attachProcess( dwProcessId );
     }
 
-    if ( remote.isWow64Process() )
+    //if ( remote.isWow64Process() )
     {
         for ( ; ; )
         {
