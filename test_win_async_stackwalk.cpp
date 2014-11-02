@@ -83,6 +83,7 @@ public:
 
 private:
     static  BOOL    CALLBACK    ReadProcessMemory64( HANDLE hProcess, DWORD64 pBaseAddress, PVOID pBuffer, DWORD nSize, LPDWORD pNumberOfBytesRead );
+    static  BOOL    CALLBACK    ReadProcessMemoryWithCache64( HANDLE hProcess, DWORD64 pBaseAddress, PVOID pBuffer, DWORD nSize, LPDWORD pNumberOfBytesRead );
 protected:
     DWORD           m_dwProcessId;
     HANDLE          m_hProcess;
@@ -254,6 +255,38 @@ kkRemoteAsyncStackwalk::termDebugHelp(void)
 BOOL
 CALLBACK
 kkRemoteAsyncStackwalk::ReadProcessMemory64(
+    HANDLE hProcess
+    , DWORD64 pBaseAddress
+    , PVOID pBuffer
+    , DWORD nSize
+    , LPDWORD pNumberOfBytesRead
+)
+{
+#if MESURE_TIME
+    const DWORD timeStart = ::GetTickCount();
+#endif // MESURE_TIME
+
+    LPCVOID pBase = reinterpret_cast<LPCVOID>(pBaseAddress);
+    SIZE_T  size = nSize;
+    SIZE_T  readedSize = 0;
+    const BOOL BRet = ::ReadProcessMemory( hProcess, pBase, pBuffer, size, &readedSize );
+
+#if MESURE_TIME
+    const DWORD timeEnd = ::GetTickCount();
+    s_dwTimeReadMemory += (timeEnd - timeStart);
+#endif // MESURE_TIME
+
+    if ( NULL != pNumberOfBytesRead )
+    {
+        *pNumberOfBytesRead = (DWORD)readedSize;
+    }
+
+    return BRet;
+}
+
+BOOL
+CALLBACK
+kkRemoteAsyncStackwalk::ReadProcessMemoryWithCache64(
     HANDLE hProcess
     , DWORD64 pBaseAddress
     , PVOID pBuffer
@@ -446,7 +479,7 @@ kkRemoteAsyncStackwalk::getStackTrace( HANDLE hThread, DWORD64 *pStackArray, con
                     , hThread
                     , &stackFrame
                     , pContextRecord
-                    , ReadProcessMemory64
+                    , ReadProcessMemoryWithCache64
                     , NULL
                     , NULL
                     , NULL
