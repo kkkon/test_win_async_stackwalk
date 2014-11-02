@@ -264,7 +264,7 @@ kkRemoteAsyncStackwalk::ReadProcessMemory64(
     const kkRemoteAsyncStackwalk::ModuleInfo&   rStack = kkRemoteAsyncStackwalk::m_stack;
     if ( NULL != rStack.pBuff )
     {
-        if ( rStack.dwAddrStart <= pBaseAddress && (pBaseAddress+nSize) < rStack.dwAddrEnd )
+        if ( rStack.dwAddrStart <= pBaseAddress && (pBaseAddress+nSize) <= rStack.dwAddrEnd )
         {
             memcpy( pBuffer, rStack.pBuff, nSize );
 
