@@ -823,6 +823,8 @@ int _tmain(int argc, _TCHAR* argv[])
         ::OutputDebugStringW( L"\n" );
     }
 
+    ::Sleep( 10*1000 );
+
     {
         const DWORD dwFlags = TH32CS_SNAPMODULE;
         HANDLE hSnapshot = ::CreateToolhelp32Snapshot( dwFlags, dwProcessId );
@@ -851,7 +853,13 @@ int _tmain(int argc, _TCHAR* argv[])
                         ::wsprintfW( temp, L"%p %p %s\n", moduleEntry.modBaseAddr, moduleEntry.modBaseSize, moduleEntry.szExePath );
                         ::OutputDebugStringW( temp );
                     }
+
                 } while ( ::Module32NextW( hSnapshot, &moduleEntry ) );
+            }
+            else
+            {
+                const DWORD dwErr = ::GetLastError();
+                ::OutputDebugStringW( L"" );
             }
         }
 
@@ -864,9 +872,12 @@ int _tmain(int argc, _TCHAR* argv[])
             }
         }
     }
-#if defined(_M_X64)
     {
-        const DWORD dwFlags = TH32CS_SNAPMODULE32;
+        ::OutputDebugStringW( L"\n" );
+    }
+#if 1//defined(_M_X64)
+    {
+        const DWORD dwFlags = TH32CS_SNAPMODULE|TH32CS_SNAPMODULE32;
         HANDLE hSnapshot = ::CreateToolhelp32Snapshot( dwFlags, dwProcessId );
 
         if ( INVALID_HANDLE_VALUE != hSnapshot )
@@ -885,6 +896,11 @@ int _tmain(int argc, _TCHAR* argv[])
                         ::OutputDebugStringW( temp );
                     }
                 } while ( ::Module32NextW( hSnapshot, &moduleEntry ) );
+            }
+            else
+            {
+                const DWORD dwErr = ::GetLastError();
+                ::OutputDebugStringW( L"" );
             }
         }
 
